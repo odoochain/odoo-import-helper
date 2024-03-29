@@ -12,11 +12,11 @@ Then, in the future production database, after the installation of the official 
 
 .. code::
 
-  UPDATE account_journal set default_account_id=null, suspense_account_id=null;
+  UPDATE account_journal set default_account_id=null, suspense_account_id=null WHERE company_id=X;
 
-  DELETE from pos_payment_method;
+  UPDATE from pos_payment_method SET outstanding_account_id=null, receivable_account_id=null WHERE company_id=X;
 
-  UPDATE ir_property SET value_reference=null WHERE value_reference like 'account.account,%';
+  UPDATE ir_property SET value_reference=null WHERE value_reference like 'account.account,%' WHERE company_id=X;
 
 * Delete all accounts:
 
