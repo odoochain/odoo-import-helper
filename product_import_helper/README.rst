@@ -47,6 +47,8 @@ In the sample code above, ``vals`` is the dictionary that will be passed to ``cr
 - it can contain a **'categ_name'** key that will be used to match an existing product category or create a new one,
 - it can contain a **'pos_categ_name'** key that will be used to match an existing POS category or create a new one,
 - it can contain a **'stock_qty'** key that will be used to set the initial stock quantity of the product,
+- it can contain a **'income_account_code'** or **'expense_account_code'** key that will be used to set the income and expense accounts (in the user's company),
+- it can contain a **'route_codes'** key that contains a list of codes among the following codes: 'buy', 'manufacture' or 'mto' to set the routes.
 
 Author
 ======

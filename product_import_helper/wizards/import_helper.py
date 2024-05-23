@@ -27,6 +27,8 @@ class ImportHelper(models.TransientModel):
             'product_default_code2name': {},
             'pos': hasattr(self, 'pos_categ_id'),
             'pos_categ2id': {},
+            'account_code2id': {},
+            'route_code2id': {},
             })
         for fc in self.env['account.product.fiscal.classification'].search([]):
             if len(fc.purchase_tax_ids) == 1 and len(fc.sale_tax_ids) == 1:
@@ -56,7 +58,20 @@ class ImportHelper(models.TransientModel):
                 speedy['product_barcode2name'][product['barcode']] = '%s (ID %d)' % (product['display_name'], product['id'])
             if product['default_code']:
                 speedy['product_default_code2name'][product['default_code']] = '%s (ID %d)' % (product['display_name'], product['id'])
-
+        accounts = self.env["account.account"].search_read(
+            [("company_id", "=", self.env.company.id), ("deprecated", "=", False)], ["code"])
+        for account in accounts:
+            speedy["account_code2id"][account["code"]] = account["id"]
+        route_code2xmlid = {
+            'buy': 'purchase_stock.route_warehouse0_buy',
+            'manufacture': 'mrp.route_warehouse0_manufacture',
+            'mto': 'stock.route_warehouse0_mto',
+            }
+        for route_code, xmlid in route_code2xmlid.items():
+            # I hope raise_if_not_found=False to avoid an error is the module is not installed
+            route = self.env.ref(xmlid, raise_if_not_found=False)
+            if route:
+                speedy["route_code2id"][route_code] = route.id
         return speedy
 
     def _create_product(self, vals, speedy, inventory=True, location_id=False):
@@ -152,7 +167,7 @@ class ImportHelper(models.TransientModel):
                     'reset': True,
                     })
                 return False
-            if len(barcode) in (8, 13):
+            if len(barcode) in (8, 13, 14):
                 if not is_valid(barcode):
                     speedy['logs']['product.product'].append({
                         'msg': 'Barcode %s has an invalid checksum' % barcode,
@@ -162,7 +177,7 @@ class ImportHelper(models.TransientModel):
                         })
             else:
                 speedy['logs']['product.product'].append({
-                    'msg': 'Barcode %s has %d caracters (should be 8 or 13 for an EAN barcode)' % (barcode, len(barcode)),
+                    'msg': 'Barcode %s has %d caracters (should be 8, 13 or 14 for an EAN barcode)' % (barcode, len(barcode)),
                     'value': barcode,
                     'vals': vals,
                     'field': 'product.product,barcode',
@@ -237,6 +252,16 @@ class ImportHelper(models.TransientModel):
             if vals.get('orderpoint_trigger'):
                 vals['trigger'] = vals['orderpoint_trigger']
             vals['orderpoint_ids'] = [Command.create(orderpoint_vals)]
+        if 'route_code' in vals:
+            route_codes = vals['route_codes']
+            if route_codes:
+                if isinstance(route_codes, str):
+                    route_codes = [route_codes]
+                vals['route_ids'] = [Command.set([speedy['route_code2id'][route_code] for route_code in route_codes])]
+            else:
+                vals['route_ids'] = []
+        for acc_type in ('income', 'expense'):
+            self._match_and_update_account(acc_type, vals, speedy)
         if not vals.get('responsible_id'):
             # field 'responsible_id' is add by the module 'stock'
             # Avoid to have current user as responsible for all imported products !
@@ -245,7 +270,7 @@ class ImportHelper(models.TransientModel):
         # vals will keep the original keys
         # rvals will be used for create(), so we need to remove all the keys are don't exist on res.partner
         rvals = dict(vals)
-        for key in ['line', 'create_date', 'vat_rate', 'categ_name', 'pos_categ_name', 'stock_qty']:
+        for key in ['line', 'create_date', 'vat_rate', 'categ_name', 'pos_categ_name', 'stock_qty', 'route_codes', 'income_account_code', 'expense_account_code']:
             if key in rvals:
                 rvals.pop(key)
         for key in vals.keys():
@@ -258,3 +283,42 @@ class ImportHelper(models.TransientModel):
 
     def _prepare_pos_category(self, vals, speedy):
         return {'name': vals['pos_categ_name']}
+
+    def _match_and_update_account(self, acc_type, vals, speedy):
+        odoo_field = f'property_account_{acc_type}_id'
+        import_code = f'{acc_type}_account_code'
+        if not vals.get(import_code):
+            return
+        account_code = vals[import_code]
+        if isinstance(account_code, int):
+            account_code = str(account_code)
+        if account_code in speedy["account_code2id"]:
+            vals[odoo_field] = speedy["account_code2id"][account_code]
+            return
+        # Match when account_dict['code'] is longer than Odoo's account
+        # codes because of trailing '0'. No warning in this case.
+        acc_code_tmp = account_code
+        while acc_code_tmp and acc_code_tmp[-1] == "0":
+            acc_code_tmp = acc_code_tmp[:-1]
+            if acc_code_tmp and acc_code_tmp in speedy["account_code2id"]:
+                vals[odoo_field] = speedy["account_code2id"][acc_code_tmp]
+                return
+        # Match when account_dict['code'] is shorter than Odoo's accounts
+        # -> warns the user about this
+        for code, account_id in speedy["account_code2id"].items():
+            if code.startswith(account_code):
+                speedy['logs']['product.product'].append({
+                    'msg': f"Approximate match: account {account_code} has been matched with account {code}",
+                    'value': account_code,
+                    'vals': vals,
+                    'field': f'product.product,{odoo_field}',
+                    })
+                vals[odoo_field] = account_id
+                return
+        speedy['logs']['product.product'].append({
+            'msg': f"No match: account {account_code} not in chart of accounts",
+            'value': account_code,
+            'vals': vals,
+            'field': f'product.product,{odoo_field}',
+            'reset': True,
+            })
