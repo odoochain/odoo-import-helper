@@ -12,17 +12,19 @@ Then, in the future production database, after the installation of the official 
 
 .. code::
 
-  UPDATE account_journal set default_account_id=null, suspense_account_id=null WHERE company_id=X;
+  UPDATE account_journal SET default_account_id=null, suspense_account_id=null WHERE company_id=X;
 
-  UPDATE from pos_payment_method SET outstanding_account_id=null, receivable_account_id=null WHERE company_id=X;
+  UPDATE FROM pos_payment_method SET outstanding_account_id=null, receivable_account_id=null WHERE company_id=X;
 
   UPDATE ir_property SET value_reference=null WHERE value_reference like 'account.account,%' WHERE company_id=X;
+
+  DELETE FROM account_fiscal_position_account WHERE company_id=X;
 
 * Delete all accounts:
 
 .. code::
 
-  DELETE FROM account_account;
+  DELETE FROM account_account WHERE company_id=X;
 
 * In the menu *Invoicing > Configuration > Accounting > Chart of accounts*, import the file *account.account.csv* with *Encoding* set to **utf-8** and *Use first row as header* enabled.
 
