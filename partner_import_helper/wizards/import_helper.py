@@ -57,6 +57,8 @@ class ImportHelper(models.TransientModel):
             },
             'industry_name2id': {},
             'fiscal_position': {},
+            # _phone_get_number_fields() is a method of phone_validation that return ['phone', 'mobile']
+            'phone_fields': self.env['res.partner']._phone_get_number_fields(),
         })
         cyd = speedy['country']
         code2to3 = {}
@@ -117,7 +119,9 @@ class ImportHelper(models.TransientModel):
         return country_name_match
 
     def _create_partner(self, vals, speedy, email_check_deliverability=True, create_bank=True):
-        rvals = self._prepare_partner_vals(vals, speedy, email_check_deliverability=email_check_deliverability, create_bank=create_bank)
+        rvals = self._prepare_partner_vals(
+            vals, speedy, email_check_deliverability=email_check_deliverability,
+            create_bank=create_bank)
         partner = self.env['res.partner'].create(rvals)
         create_date_dt = self._prepare_create_date(vals, speedy)
         if create_date_dt:
@@ -129,19 +133,12 @@ class ImportHelper(models.TransientModel):
         logger.info('New partner created: %s ID %d from line %d', partner.display_name, partner.id, vals['line'])
         return partner
 
-    # vals is a dict to create a res.partner
-    # It must contain a 'line' key, to indicate Excel/CSV import ref in logs
-    # (removed before calling create)
-    # it can contain some special keys, which will be replaced by the corresponding real key after processing:
-    # 'country_name' => 'country_id'
-    # 'title_code' can contain 'madam', 'miss', 'mister', 'doctor', 'prof' /  => 'title'
-    # 'iban' => 'bank_ids': [(0, 0, {'acc_number': xxx})]
-    # 'bic': => 'bank_ids': [(0, 0, {'acc_number': xxxx, 'bank_id': bank_id})]
     @api.model
-    def _prepare_partner_vals(self, vals, speedy, email_check_deliverability=True, create_bank=True):
+    def _prepare_parent_child_partner_vals(self, vals, parent_or_child, speedy, email_check_deliverability=True, parent_country_id=False):
         assert vals
         assert isinstance(vals, dict)
         assert isinstance(speedy, dict)
+        assert parent_or_child in ('parent', 'child')
         for key, value in vals.items():
             if isinstance(value, str):
                 vals[key] = value.strip() or False
@@ -155,14 +152,16 @@ class ImportHelper(models.TransientModel):
             country_id = self._match_country(vals, speedy)
             # Warning: country_id can be False
             vals['country_id'] = country_id
+        if parent_or_child == 'child' and not country_id and parent_country_id:
+            country_id = parent_country_id
+        if country_id:
             country_code = speedy['country']['id2code'].get(country_id)
         # TITLE
         if not vals.get('is_company') and vals.get('title_code') and isinstance(vals['title_code'], str) and not vals.get('title'):
             title_id = self._match_partner_title(vals, speedy)
             vals['title'] = title_id
         # PHONE/MOBILE
-        # _phone_get_number_fields() is a method of phone_validation that return ['phone', 'mobile']
-        for phone_field in self.env['res.partner']._phone_get_number_fields():
+        for phone_field in speedy['phone_fields']:
             if vals.get(phone_field):
                 if speedy['o2m_phone'] and isinstance(vals[phone_field], list):
                     if 'phone_ids' not in vals:
@@ -242,6 +241,26 @@ class ImportHelper(models.TransientModel):
                     'field': 'res.partner,zip',
                     })
             # if we have geonames, we could compare it with the DB of zip
+
+    # vals is a dict to create a res.partner
+    # It must contain a 'line' key, to indicate Excel/CSV import ref in logs
+    # (removed before calling create)
+    # it can contain some special keys, which will be replaced by the corresponding real key after processing:
+    # 'country_name' => 'country_id'
+    # 'title_code' can contain 'madam', 'miss', 'mister', 'doctor', 'prof' /  => 'title'
+    # 'iban' => 'bank_ids': [(0, 0, {'acc_number': xxx})]
+    # 'bic': => 'bank_ids': [(0, 0, {'acc_number': xxxx, 'bank_id': bank_id})]
+    @api.model
+    def _prepare_partner_vals(self, vals, speedy, email_check_deliverability=True, create_bank=True):
+        self._prepare_parent_child_partner_vals(
+            vals, 'parent', speedy, email_check_deliverability=email_check_deliverability)
+        if vals.get('child_ids'):
+            for child in vals['child_ids']:
+                self._prepare_parent_child_partner_vals(
+                    child[2], 'child', speedy,
+                    email_check_deliverability=email_check_deliverability,
+                    parent_country_id=vals.get('country_id'))
+        country_id = vals.get('country_id')
         # is_company
         if not vals.get('is_company') and (vals.get('vat') or vals.get('siren') or vals.get('siret')):
             if vals.get('vat'):
